@@ -6,6 +6,9 @@
     DISCLAIMER: Microsoft is planning to release these updates through normal Windows Update channels. 
     It is best to use those official channels instead of this script. This script serves as a backup 
     plan if the standard updates do not work or are unavailable.
+    
+    WARNING: Modifying UEFI Secure Boot variables carries inherent risks. Depending on your system's 
+    firmware, applying this update could potentially cause the computer to fail to boot.
 
     This script checks if the "Windows UEFI CA 2023" is present in the UEFI 'db' variable.
     If missing, it attempts to enable the update via registry keys (Standard Microsoft Method).

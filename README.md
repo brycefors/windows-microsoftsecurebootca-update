@@ -3,6 +3,8 @@
 ## Overview
 > [!IMPORTANT]
 > Microsoft is planning to release these updates through normal Windows Update channels. It is highly recommended to use those official channels instead of this script. This script is intended as a backup plan or manual remediation tool if the standard updates are not applicable or fail to apply.
+>
+> **WARNING**: Modifying UEFI Secure Boot variables carries inherent risks. Depending on your system's firmware implementation, applying this update could potentially cause the computer to fail to boot. Use this script at your own risk.
 
 This repository contains a PowerShell script designed to automate the validation and installation of the **Microsoft Windows UEFI CA 2023** certificate into the system's Secure Boot Database (DB). This update is crucial for ensuring the system trusts newer bootloaders signed by Microsoft.
 
