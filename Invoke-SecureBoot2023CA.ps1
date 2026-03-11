@@ -3,7 +3,7 @@
     Validates and adds the Windows UEFI CA 2023 certificate to the Secure Boot DB.
 
 .DESCRIPTION
-    This script checks if the "Microsoft Windows UEFI CA 2023" is present in the UEFI 'db' variable.
+    This script checks if the "Windows UEFI CA 2023" is present in the UEFI 'db' variable.
     If missing, it attempts to enable the update via registry keys (Standard Microsoft Method).
     It supports a production flag for making changes and a reboot flag for restarting.
     It uses a stamp file to prevent re-running if previously successful.
@@ -134,10 +134,14 @@ if ($CreateScheduledTask) {
         exit 1
     }
     
-    exit # Exit after creating the task
+    exit 
 }
 
-# Ensure Log Directory Exists
+# ---------------------------------------------------------------------------
+# 2. Execution & State Tracking
+# ---------------------------------------------------------------------------
+
+# Ensure Log Directory Exists before any file operations
 if ($Production -and -not (Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
@@ -161,14 +165,12 @@ if ($Production) {
     }
 }
 
-# 2. Check for Success Stamp
 # If the stamp exists, we assume the job is done and we exit to prevent loops.
 if (Test-Path $StampFile) {
     Write-Log -Message "Success stamp found ($StampFile). Script has already run successfully. Exiting." -Path $LogFileExists
     exit
 }
 
-# 3. Check UEFI Database (db) for the Certificate
 try {
     # Get the 'db' variable. This requires a UEFI system.
     $SecureBootDB = Get-SecureBootUEFI -Name db -ErrorAction Stop
