@@ -1,6 +1,9 @@
 # Windows Microsoft Secure Boot CA 2023 Update
 
 ## Overview
+> [!IMPORTANT]
+> Microsoft is planning to release these updates through normal Windows Update channels. It is highly recommended to use those official channels instead of this script. This script is intended as a backup plan or manual remediation tool if the standard updates are not applicable or fail to apply.
+
 This repository contains a PowerShell script designed to automate the validation and installation of the **Microsoft Windows UEFI CA 2023** certificate into the system's Secure Boot Database (DB). This update is crucial for ensuring the system trusts newer bootloaders signed by Microsoft.
 
 ## Script: `Invoke-SecureBoot2023CA.ps1`
@@ -18,7 +21,7 @@ All activity is logged to `C:\Windows\Logs\UEFICA2023\`. The scheduled task is *
 
 ### Key Features
 
-**3. Automated Persistence**
+**Automated Persistence**
 Recommended for production environments. Sets up the persistent task to handle reboots and validation automatically.
 ```powershell
 .\Invoke-SecureBoot2023CA.ps1 -CreateScheduledTask

@@ -3,6 +3,10 @@
     Validates and adds the Windows UEFI CA 2023 certificate to the Secure Boot DB.
 
 .DESCRIPTION
+    DISCLAIMER: Microsoft is planning to release these updates through normal Windows Update channels. 
+    It is best to use those official channels instead of this script. This script serves as a backup 
+    plan if the standard updates do not work or are unavailable.
+
     This script checks if the "Windows UEFI CA 2023" is present in the UEFI 'db' variable.
     If missing, it attempts to enable the update via registry keys (Standard Microsoft Method).
     It supports a production flag for making changes and a reboot flag for restarting.
