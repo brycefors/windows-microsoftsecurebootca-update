@@ -8,7 +8,21 @@ This repository contains a PowerShell script designed to automate the validation
 ### Description
 The script interacts with the UEFI firmware variables to detect if the new CA certificate is present. If it is missing, it utilizes the standard Microsoft method (Registry Key + Scheduled Task) to stage the update for the next reboot. It includes logic to register itself as a scheduled task to run on startup until validation succeeds.
 
+### Recommended Usage
+The most reliable way to apply this update is using the `-CreateScheduledTask` parameter. This automates the process across the multiple reboots required for UEFI variable updates. 
+
+1. Run the script: `.\Invoke-SecureBoot2023CA.ps1 -CreateScheduledTask`
+2. Reboot the system 2-3 times.
+
+All activity is logged to `C:\Windows\Logs\UEFICA2023\`. The scheduled task is **self-cleaning**: it will be automatically deleted once the certificate is successfully verified or if the script file itself is removed from the system.
+
 ### Key Features
+
+**3. Automated Persistence**
+Recommended for production environments. Sets up the persistent task to handle reboots and validation automatically.
+```powershell
+.\Invoke-SecureBoot2023CA.ps1 -CreateScheduledTask
+```
 *   **UEFI Variable Inspection**: Directly reads the `db` variable using `Get-SecureBootUEFI` to verify certificate presence.
 *   **Idempotency**: detailed state tracking ensures the script handles multiple reboots intelligently and does not run unnecessarily if a "Success" stamp exists.
 *   **Safety First**: Defaults to a "Dry Run" mode unless the `-Production` switch is explicitly provided.
@@ -40,7 +54,7 @@ Checks for the certificate. If missing, applies the registry fix and reboots imm
 ### Technical Workflow
 1.  **Permission Check**: Verifies the script is running as Administrator.
 2.  **Stamp Check**: Looks for `%SystemRoot%\Logs\UEFICA2023\Success.tag`. If found, exits.
-3.  **UEFI Check**: Scans the UEFI `db` for the string "Microsoft Windows UEFI CA 2023".
+3.  **UEFI Check**: Scans the UEFI `db` for the string "Windows UEFI CA 2023".
 4.  **Remediation (If Missing)**:
     *   Sets Registry: `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\AvailableUpdates` = `0x40`.
     *   Starts Task: `\Microsoft\Windows\PI\Secure-Boot-Update`.

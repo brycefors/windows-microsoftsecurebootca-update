@@ -46,7 +46,7 @@ $LogFileExists   = Join-Path -Path $LogDir -ChildPath "Cert_Exists.log"
 $LogFileUpdate   = Join-Path -Path $LogDir -ChildPath "Cert_Update.log"
 $StampFile       = Join-Path -Path $LogDir -ChildPath "Success.tag"
 $ValidationTracker = Join-Path -Path $LogDir -ChildPath "ValidationTracker.xml"
-$TargetCertSubject = "Microsoft Windows UEFI CA 2023"
+$TargetCertSubject = "Windows UEFI CA 2023"
 
 # Microsoft Registry Key for enabling the 2023 Update
 # Setting AvailableUpdates to 0x40 allows the OS to attempt the DB update
@@ -227,6 +227,12 @@ else {
         Write-Host "WARNING: -Production flag not set. No changes will be made." -ForegroundColor Yellow
         Write-Host "ACTION: Would set registry key '$RegPath\$RegName' to '$RegValue'."
         if ($Reboot) { Write-Host "ACTION: Would reboot system." }
+        exit
+    }
+
+    # If this is not the first run (tracker count > 1), don't re-apply the fix. Just wait for reboots.
+    if ($Tracker.Count -gt 1) {
+        Write-Log -Message "Remediation was previously applied. Waiting for reboot for changes to take effect. (Attempt: $($Tracker.Count))" -Path $LogFileUpdate
         exit
     }
 
