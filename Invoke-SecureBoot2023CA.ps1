@@ -99,41 +99,59 @@ if (-not (Test-IsAdmin)) {
     exit
 }
 
-# 2. Immediate Exit if already completed
+# Handle implied Production mode for task creation
+if ($CreateScheduledTask -and -not $Production) { $Production = $true }
+
+# 2. Ensure Log Directory Exists
+if ($Production -and -not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+
+# 3. Immediate Exit if success stamp already exists
 if (Test-Path $StampFile) {
     Write-Log -Message "Success stamp found ($StampFile). Script has already run successfully. Exiting." -Path $LogFileExists
     exit
 }
 
-# Handle Scheduled Task Creation
-if ($CreateScheduledTask) {
-    # The -CreateScheduledTask switch implies -Production for logging purposes.
-    if (-not $Production) { $Production = $true }
+# 4. UEFI Assessment
+try {
+    # Get the 'db' variable. This requires a UEFI system and Admin rights.
+    $SecureBootDB = Get-SecureBootUEFI -Name db -ErrorAction Stop
+    $BytesString  = [System.Text.Encoding]::ASCII.GetString($SecureBootDB.Bytes)
+    $CertFound    = $BytesString -match $TargetCertSubject
+}
+catch {
+    Write-Log -Message "Failed to read UEFI 'db' variable: $($_.Exception.Message)" -Path $LogFileUpdate
+    if (-not $CreateScheduledTask) { exit 1 }
+    $CertFound = $false # Fall through for task creation if we can't check yet
+}
 
-    # Ensure Log Directory Exists for task creation logging
-    if (-not (Test-Path $LogDir)) {
-        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+# 5. Unified Success Handling
+if ($CertFound) {
+    if ($CreateScheduledTask) {
+        Write-Host "Certificate '$TargetCertSubject' is already present. Scheduled task will not be created."
     }
 
-    # Immediate check: If the cert is already present, finalize now and avoid unnecessary task creation
-    try {
-        $SBCheck = Get-SecureBootUEFI -Name db -ErrorAction Stop
-        if ([System.Text.Encoding]::ASCII.GetString($SBCheck.Bytes) -match $TargetCertSubject) {
-            Write-Log -Message "Certificate '$TargetCertSubject' already exists. Finalizing immediately." -Path $LogFileExists
-            New-Item -Path $StampFile -ItemType File -Force | Out-Null
-            
-            if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-                Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-                Write-Log -Message "Removed existing scheduled task '$TaskName' as remediation is complete." -Path $LogFileUpdate
-            }
-            
-            Write-Host "Success: Certificate is already present. Success stamp created."
-            exit
+    if ($Production) {
+        Write-Log -Message "Success: Certificate '$TargetCertSubject' found. Finalizing." -Path $LogFileExists
+        New-Item -Path $StampFile -ItemType File -Force | Out-Null
+        
+        # Clean up scheduled task if it exists
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+            Write-Log -Message "Removed existing scheduled task '$TaskName'." -Path $LogFileUpdate
         }
-    } catch { } # Fall through to task creation if check fails (non-UEFI or access denied)
+        Write-Host "Success: Certificate is present. Success stamp created."
+    } else {
+        Write-Log -Message "Validation Passed (Dry Run): '$TargetCertSubject' is present." -Path $LogFileExists
+    }
+    exit
+}
 
+# Handle Scheduled Task Creation
+if ($CreateScheduledTask) {
     Write-Log -Message "Creating scheduled task '$TaskName' to run this script on startup." -Path $LogFileUpdate
-    
+
     try {
         # Get the full path to the current script
         $ScriptPath = $PSCommandPath
@@ -183,11 +201,6 @@ if ($CreateScheduledTask) {
 # 2. Execution & State Tracking
 # ---------------------------------------------------------------------------
 
-# Ensure Log Directory Exists before any file operations
-if ($Production -and -not (Test-Path $LogDir)) {
-    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-}
-
 # Track validations across reboots globally (cert might not appear immediately)
 if ($Production) {
     $CurrentBootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
@@ -207,109 +220,62 @@ if ($Production) {
     }
 }
 
-try {
-    # Get the 'db' variable. This requires a UEFI system.
-    $SecureBootDB = Get-SecureBootUEFI -Name db -ErrorAction Stop
-}
-catch {
-    Write-Error "Failed to read UEFI 'db' variable. Ensure this is a UEFI system and Secure Boot is capable."
-    Write-Error $_.Exception.Message
-    exit
-}
+# -----------------------------------------------------------------------
+# Scenario: Certificate Missing - Remediation
+# -----------------------------------------------------------------------
+Write-Log -Message "Validation Failed: '$TargetCertSubject' is NOT found in the UEFI db." -Path $LogFileUpdate
 
-# The DB variable returns an object with a Bytes property. 
-# We convert bytes to a string to search for the Subject Name.
-# Note: This is a heuristic search. For strict cryptographic validation, complex parsing is required.
-$BytesString = [System.Text.Encoding]::ASCII.GetString($SecureBootDB.Bytes)
-$CertFound = $BytesString -match $TargetCertSubject
-
-if ($CertFound) {
-    # -----------------------------------------------------------------------
-    # Scenario: Certificate Exists
-    # -----------------------------------------------------------------------
-    if ($Production) {
-        # Create stamp only after validating across 2 distinct boot sessions
-        if ($Tracker.Count -ge 2) {
-            Write-Log -Message "Validation Passed: '$TargetCertSubject' is present in the UEFI db." -Path $LogFileExists
-            New-Item -Path $StampFile -ItemType File -Force | Out-Null
-            Write-Log -Message "Success stamp created (Reboot Count: $($Tracker.Count))." -Path $LogFileExists
-
-            # Self-cleanup: Delete the scheduled task if it exists
-            try {
-                if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-                    Write-Log -Message "Attempting to remove scheduled task '$TaskName'..." -Path $LogFileExists
-                    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
-                    Write-Log -Message "Scheduled task '$TaskName' removed successfully." -Path $LogFileExists
-                }
-            }
-            catch {
-                Write-Log -Message "Warning: Failed to remove scheduled task '$TaskName'. It may need to be removed manually. Error: $($_.Exception.Message)" -Path $LogFileExists
-            }
-        }
-        else {
-            Write-Log -Message "Certificate detected. Waiting for 2nd reboot to confirm stability (Count: $($Tracker.Count))." -Path $LogFileExists
-        }
-    } else {
-        Write-Log -Message "Validation Passed (Dry Run): '$TargetCertSubject' is present in the UEFI db." -Path $LogFileExists
-    }
-    
-    exit
-}
-else {
-    # -----------------------------------------------------------------------
-    # Scenario: Certificate Missing
-    # -----------------------------------------------------------------------
-    Write-Log -Message "Validation Failed: '$TargetCertSubject' is NOT found in the UEFI db." -Path $LogFileUpdate
-
-    if (-not $Production) {
+if (-not $Production) {
+    if (-not $CertFound) {
         Write-Host "WARNING: -Production flag not set. No changes will be made." -ForegroundColor Yellow
         Write-Host "ACTION: Would set registry key '$RegPath\$RegName' to '$RegValue'."
         if ($Reboot) { Write-Host "ACTION: Would reboot system." }
         exit
     }
 
-    # If this is not the first run (tracker count > 1), don't re-apply the fix. Just wait for reboots.
-    if ($Tracker.Count -gt 1) {
-        Write-Log -Message "Remediation was previously applied. Waiting for reboot for changes to take effect. (Attempt: $($Tracker.Count))" -Path $LogFileUpdate
-        exit
+}
+
+# If this is not the first run (tracker count > 1), don't re-apply the fix. Just wait for reboots.
+if ($Tracker.Count -gt 1) {
+    Write-Log -Message "Remediation was previously applied. Waiting for reboot for changes to take effect. (Attempt: $($Tracker.Count))" -Path $LogFileUpdate
+    exit
+}
+
+# Apply Fix
+try {
+    Write-Log -Message "Attempting to enable UEFI CA 2023 update via Registry..." -Path $LogFileUpdate
+
+    # Check if path exists, create if not (unlikely for this specific key, but good practice)
+    if (-not (Test-Path $RegPath)) {
+        New-Item -Path $RegPath -Force | Out-Null
     }
 
-    # Apply Fix
-    try {
-        Write-Log -Message "Attempting to enable UEFI CA 2023 update via Registry..." -Path $LogFileUpdate
+    # Set the Registry Key to trigger OS update handling
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $RegValue -Type DWord -Force
+    
+    Write-Log -Message "Registry key set successfully." -Path $LogFileUpdate
 
-        # Check if path exists, create if not (unlikely for this specific key, but good practice)
-        if (-not (Test-Path $RegPath)) {
-            New-Item -Path $RegPath -Force | Out-Null
-        }
+    # Trigger the Secure Boot Update task to stage the change before reboot
+    Write-Log -Message "Starting scheduled task: \Microsoft\Windows\PI\Secure-Boot-Update" -Path $LogFileUpdate
+    Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update" | Out-Null
 
-        # Set the Registry Key to trigger OS update handling
-        Set-ItemProperty -Path $RegPath -Name $RegName -Value $RegValue -Type DWord -Force
-        
-        Write-Log -Message "Registry key set successfully." -Path $LogFileUpdate
-
-        # Trigger the Secure Boot Update task to stage the change before reboot
-        Write-Log -Message "Starting scheduled task: \Microsoft\Windows\PI\Secure-Boot-Update" -Path $LogFileUpdate
-        Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update" | Out-Null
-
-        # Wait for the task to finish
-        while ((Get-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update").State -eq 'Running') {
-            Start-Sleep -Seconds 1
-        }
-
-        # Handle Reboot
-        if ($Reboot) {
-            Write-Log -Message "Reboot flag detected. Restarting system in 5 seconds..." -Path $LogFileUpdate
-            Start-Sleep -Seconds 5
-            Restart-Computer -Force
-        }
-        else {
-            Write-Log -Message "Update applied. A manual reboot is required for the UEFI DB update to take effect." -Path $LogFileUpdate
-        }
-
+    # Wait for the task to finish
+    while ((Get-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update").State -eq 'Running') {
+        Start-Sleep -Seconds 1
     }
-    catch {
-        Write-Log -Message "Error applying update: $($_.Exception.Message)" -Path $LogFileUpdate
-        exit 1
+
+    # Handle Reboot
+    if ($Reboot) {
+        Write-Log -Message "Reboot flag detected. Restarting system in 5 seconds..." -Path $LogFileUpdate
+        Start-Sleep -Seconds 5
+        Restart-Computer -Force
     }
+    else {
+        Write-Log -Message "Update applied. A manual reboot is required for the UEFI DB update to take effect." -Path $LogFileUpdate
+    }
+
+}
+catch {
+    Write-Log -Message "Error applying update: $($_.Exception.Message)" -Path $LogFileUpdate
+    exit 1
 }
