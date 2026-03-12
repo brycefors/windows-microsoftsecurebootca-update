@@ -99,6 +99,12 @@ if (-not (Test-IsAdmin)) {
     exit
 }
 
+# 2. Immediate Exit if already completed
+if (Test-Path $StampFile) {
+    Write-Log -Message "Success stamp found ($StampFile). Script has already run successfully. Exiting." -Path $LogFileExists
+    exit
+}
+
 # Handle Scheduled Task Creation
 if ($CreateScheduledTask) {
     # The -CreateScheduledTask switch implies -Production for logging purposes.
@@ -108,6 +114,23 @@ if ($CreateScheduledTask) {
     if (-not (Test-Path $LogDir)) {
         New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
     }
+
+    # Immediate check: If the cert is already present, finalize now and avoid unnecessary task creation
+    try {
+        $SBCheck = Get-SecureBootUEFI -Name db -ErrorAction Stop
+        if ([System.Text.Encoding]::ASCII.GetString($SBCheck.Bytes) -match $TargetCertSubject) {
+            Write-Log -Message "Certificate '$TargetCertSubject' already exists. Finalizing immediately." -Path $LogFileExists
+            New-Item -Path $StampFile -ItemType File -Force | Out-Null
+            
+            if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+                Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+                Write-Log -Message "Removed existing scheduled task '$TaskName' as remediation is complete." -Path $LogFileUpdate
+            }
+            
+            Write-Host "Success: Certificate is already present. Success stamp created."
+            exit
+        }
+    } catch { } # Fall through to task creation if check fails (non-UEFI or access denied)
 
     Write-Log -Message "Creating scheduled task '$TaskName' to run this script on startup." -Path $LogFileUpdate
     
@@ -134,7 +157,19 @@ if ($CreateScheduledTask) {
         }
 
         Write-Log -Message "Scheduled task '$TaskName' created/updated successfully." -Path $LogFileUpdate
-        Write-Host "Task will run on next reboot. Remediation will be applied automatically."
+
+        Write-Log -Message "Starting scheduled task '$TaskName' immediately." -Path $LogFileUpdate
+        Start-ScheduledTask -TaskName $TaskName
+
+        # Verification that the task exists and is active
+        Start-Sleep -Seconds 1
+        $VerifyTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($null -eq $VerifyTask) {
+            throw "Scheduled task '$TaskName' was not found immediately after attempt to start it. This may occur if the script completed and self-deleted because the CA is already up to date."
+        }
+        Write-Log -Message "Task '$TaskName' verified. Current state: $($VerifyTask.State)" -Path $LogFileUpdate
+
+        Write-Host "Task started and will also run on subsequent reboots until completion."
     }
     catch {
         Write-Log -Message "Error creating scheduled task: $($_.Exception.Message)" -Path $LogFileUpdate
@@ -170,12 +205,6 @@ if ($Production) {
         $Tracker | Export-Clixml -Path $ValidationTracker -Force
         Write-Log -Message "New boot session detected. Validation count incremented to $($Tracker.Count)." -Path $LogFileExists
     }
-}
-
-# If the stamp exists, we assume the job is done and we exit to prevent loops.
-if (Test-Path $StampFile) {
-    Write-Log -Message "Success stamp found ($StampFile). Script has already run successfully. Exiting." -Path $LogFileExists
-    exit
 }
 
 try {
